@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tableau report embed</title>
+<style>
+:root{--bg:#f2f4f6;--card:#fff;--ink:#17202b;--mute:#5c6876;--line:#dde2e8;--acc:#0e6b8a;--acc-ink:#fff;--err:#b3392f}
+@media (prefers-color-scheme:dark){:root{--bg:#10161d;--card:#18212b;--ink:#e8edf2;--mute:#97a3b0;--line:#2a3643;--acc:#4fb3d3;--acc-ink:#0a1822;--err:#ff8a7e}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{padding:12px 16px}
+h1{font:600 26px Georgia,serif;margin:0 0 4px}
+p{margin:4px 0;color:var(--mute)}
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:16px 0 8px}
+input[type=url]{flex:1;min-width:260px;background:var(--card);border:1px solid var(--line);border-radius:6px;padding:8px 10px;font:inherit;color:inherit}
+button{font:inherit;cursor:pointer;border:1px solid var(--acc);background:var(--acc);color:var(--acc-ink);border-radius:6px;padding:8px 16px;font-weight:600}
+input:focus-visible,button:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+#tabs{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 8px}
+#tabs button{background:var(--card);color:var(--ink);border:1px solid var(--line);font-weight:500;padding:6px 12px}
+#tabs button[aria-pressed="true"]{background:var(--acc);color:var(--acc-ink);border-color:var(--acc)}
+button.sec{background:var(--card);color:var(--ink);border-color:var(--line);font-weight:500}
+select{font:inherit;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:6px;padding:8px 10px}
+#msg{min-height:22px;font-size:14px;color:var(--mute)}#msg.err{color:var(--err)}
+#wrap{background:var(--card);border:1px solid var(--line);border-radius:10px;min-height:200px;overflow:auto}
+iframe,tableau-viz{display:block;width:100%;border:0}
+iframe{height:100%}
+@media (max-width:700px){main{padding:12px}}
+</style>
+</head>
+<body>
+<main>
+<h1>Tableau report</h1>
+<p>Paste the URL of one specific view (open the view in Tableau, then copy the address bar).</p>
+<div class="bar">
+<input type="url" id="u" aria-label="Tableau view URL" value="https://tgamtableau.globeandmail.net/#/views/CEM-2099DailyDigitalReportwithOrderTransactions/DailyDIgitalReport-Summary">
+<label><input type="checkbox" id="ifr"> Use iframe instead</label>
+<button id="go">Embed</button>
+</div>
+<div class="bar">
+<select id="sv" aria-label="Saved views"></select>
+<button class="sec" id="sav" type="button">Save this view</button>
+<button class="sec" id="rmv" type="button">Remove selected</button>
+</div>
+<div id="msg" role="status"></div>
+<div id="tabs" role="group" aria-label="Views in this workbook"></div>
+<div id="wrap"></div>
+</main>
+<script>
+var $=function(i){return document.getElementById(i)};
+function msg(t,e){$("msg").textContent=t;$("msg").className=e?"err":""}
+function norm(raw){
+var u;try{u=new URL(raw.trim())}catch(e){return{err:"That is not a valid URL."}}
+var p=u.hash&&u.hash.indexOf("#/")==0?u.hash.slice(1):u.pathname;
+p=p.split("?")[0].replace(/\/+$/,"");
+if(/^\/workbooks\/\d+(\/views)?$/.test(p)||/\/views$/.test(p)&&p.split("/").length<4)
+return{err:"That link is the list of views in a workbook. Open one view in Tableau and paste its URL (it looks like .../#/views/WorkbookName/ViewName)."};
+p=p.replace(/^\/site\/([^/]+)/,"/t/$1");
+if(!/\/views\/[^/]+\/[^/]+/.test(p))return{err:"Could not find /views/WorkbookName/ViewName in that URL."};
+return{origin:u.origin,src:u.origin+p}}
+var loaded={};
+function loadApi(origin,ok,fail){
+if(loaded[origin]){ok();return}
+var s=document.createElement("script");s.type="module";s.src=origin+"/javascripts/api/tableau.embedding.3.latest.min.js";
+s.onload=function(){loaded[origin]=1;ok()};s.onerror=fail;document.head.appendChild(s)}
+function embed(){
+var n=norm($("u").value);$("wrap").innerHTML="";$("tabs").innerHTML="";fit();
+if(n.err)return msg(n.err,1);
+try{localStorage.setItem("tableauViewUrl",$("u").value)}catch(e){}
+if($("ifr").checked){
+var f=document.createElement("iframe");f.title="Tableau view";
+f.src=n.src+"?:embed=y&:showVizHome=no&:tabs=yes&:toolbar=yes";
+$("wrap").appendChild(f);msg("Loading with iframe. If it stays blank, the server may block embedding or you may need to sign in.");return}
+msg("Loading Tableau…");
+loadApi(n.origin,function(){
+var v=document.createElement("tableau-viz");
+v.setAttribute("src",n.src);v.setAttribute("toolbar","bottom");v.setAttribute("hide-tabs","");v.setAttribute("width","100%");v.setAttribute("height",$("wrap").style.height);
+var t=setTimeout(function(){msg("Still loading. If nothing appears, sign in to Tableau in this browser and check the server's embedding allow-list.",1)},15000);
+v.addEventListener("firstinteractive",function(){clearTimeout(t);msg("Loaded.");buildTabs(v)});
+$("wrap").appendChild(v)},
+function(){msg("Could not load Tableau's embedding script from "+n.origin+". Check you are on the company network or VPN, and that the server allows this page's domain.",1)})}
+function buildTabs(v){
+var tb=$("tabs"),wb=v.workbook;tb.innerHTML="";
+if(!wb||!wb.publishedSheetsInfo||wb.publishedSheetsInfo.length<2){fit();return}
+function mark(){Array.prototype.forEach.call(tb.children,function(b){b.setAttribute("aria-pressed",String(b.textContent==wb.activeSheet.name))})}
+wb.publishedSheetsInfo.forEach(function(si){
+var b=document.createElement("button");b.type="button";b.textContent=si.name;
+b.setAttribute("aria-pressed",String(si.name==wb.activeSheet.name));
+b.onclick=function(){wb.activateSheetAsync(si.name).then(mark).catch(function(){msg("Could not open "+si.name,1)})};
+tb.appendChild(b)});
+v.addEventListener("tabswitched",mark);fit()}
+var SV=[];try{SV=JSON.parse(localStorage.getItem("tableauSaved")||"[]")}catch(e){}
+if(!SV.length)SV=[{name:"Daily Digital Report - Summary",url:$("u").value}];
+function renderSV(){var s=$("sv");s.innerHTML="";var o=document.createElement("option");o.value="";o.textContent="Saved views";s.appendChild(o);
+SV.forEach(function(x,i){var p=document.createElement("option");p.value=i;p.textContent=x.name;s.appendChild(p)})}
+function persist(){try{localStorage.setItem("tableauSaved",JSON.stringify(SV))}catch(e){}renderSV()}
+$("sav").onclick=function(){var n=norm($("u").value);if(n.err)return msg(n.err,1);
+var nm=prompt("Name for this view?",decodeURIComponent(n.src.split("/").pop()));if(!nm)return;
+SV=SV.filter(function(x){return x.url!=$("u").value});SV.push({name:nm,url:$("u").value});persist();msg("Saved.")};
+$("rmv").onclick=function(){var i=$("sv").value;if(i==="")return;SV.splice(+i,1);persist()};
+$("sv").onchange=function(){var x=SV[+this.value];if(x){$("u").value=x.url;embed()}};
+renderSV();
+function fit(){var w=$("wrap"),h=Math.max(520,window.innerHeight-w.getBoundingClientRect().top-16);w.style.height=h+"px";var v=w.querySelector("tableau-viz");if(v)v.setAttribute("height",h+"px")}
+window.addEventListener("resize",fit);
+$("go").onclick=embed;
+$("u").addEventListener("keydown",function(e){if(e.key=="Enter")embed()});
+try{var s=localStorage.getItem("tableauViewUrl");if(s)$("u").value=s}catch(e){}
+if(!norm($("u").value).err)embed();
+</script>
+</body>
+</html>
